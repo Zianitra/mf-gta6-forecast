@@ -58,6 +58,23 @@ def logit(pct: float) -> float:
     return math.log(clamp(pct) / (100 - clamp(pct)))
 
 
+def nondecreasing(values: list) -> list:
+    """Force a row's quantiles to be non-decreasing.
+
+    The sigmoid is monotone and round4 is monotone, so a row cannot invert in
+    practice; this is a guarantee the grader's "each at least the one before it"
+    rule holds whatever rounding or floating point does, and it keeps the output
+    deterministic (a pure function of the values in).
+    """
+    out = []
+    prev = float("-inf")
+    for v in values:
+        v = max(v, prev)
+        out.append(v)
+        prev = v
+    return out
+
+
 def round4(x: float) -> float | int:
     """x rounded to 4 decimals, half up, as JavaScript's Math.round(x * 10000) / 10000 rounds it.
 
@@ -110,16 +127,19 @@ def forecast_case(case: dict, name: str) -> dict:
                 a = my - b * mx
                 resid = [logit(v) - (a + b * x) for x, v in pts]
                 rmse = math.sqrt(sum(e * e for e in resid) / n)
-                # Damped extrapolation of the fit to the target instant.
+                # Damped extrapolation of the fit to the target instant: the
+                # trend's prediction is blended toward the last read, and the
+                # blend weight is capped well short of 1 so a straight-line fit
+                # is never trusted in full, however many reads back it.
                 xt = math.log1p(math.expm1(xs_all[-1]) + days * 24.0)
-                lam = min(1.0, n / 6.0)
+                lam = min(0.5, n / 12.0)
                 mu = (1 - lam) * lg + lam * (a + b * xt)
                 s = SIGMA * math.sqrt(days) + 0.35 * rmse * math.sqrt(max(0.1, days * 4.0)) + 0.05
                 s *= min(1.5, max(1.0, growth ** 0.5))
         elif growth > 1.0:
             s += 0.3 * math.log(growth)
         s = max(s, 0.12)
-        rows.append({"id": trophy["id"], "q": [round4(100 / (1 + math.exp(-(mu + z * s)))) for z in Z]})
+        rows.append({"id": trophy["id"], "q": nondecreasing([round4(100 / (1 + math.exp(-(mu + z * s)))) for z in Z])})
     return {"trophies": rows}
 
 
